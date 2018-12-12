@@ -39,17 +39,33 @@ struct blocklog {
 
    bool                             info;
    bool                             print_packed_header;
+   bool                             print_packed_trx;
 
-   uint32_t                         pack_header_from;
-   uint32_t                         pack_header_interval;
-   uint32_t                         pack_header_times;
+   uint32_t                         pack_headers_from;
+   uint32_t                         pack_headers_interval;
+   uint32_t                         pack_headers_times;
 };
 
+template <typename T>
+void print_packed_data(std::ostream* out, const string& name, const T &v){
+   bytes s = fc::raw::pack(v);
+   *out << name << '=' << "'\"" << fc::to_hex(s.data(),s.size()) <<"\"'" << "\n";
+};
+
+void print_hex(std::ostream* out, const string& name, const char* str, const int size){
+   *out << name << '=' << "'\"" << fc::to_hex(str,size)  <<"\"'" << "\n";
+};
+
+template <typename T>
+void print_var(std::ostream* out, const string& name, const T &v){
+   *out << name << '=' << "'"<<  fc::json::to_string(v)  <<"'" << "\n";
+};
 
 struct transaction_receipt_type : public transaction_receipt_header {
    packed_transaction trx;
 };
 
+FC_REFLECT_DERIVED(transaction_receipt_type, (eosio::chain::transaction_receipt_header), (trx) )
 
 void blocklog::read_log() {
    block_log block_logger(blocks_dir);
@@ -57,7 +73,7 @@ void blocklog::read_log() {
    EOS_ASSERT( end, block_log_exception, "No blocks found in block log" );
    EOS_ASSERT( end->block_num() > 1, block_log_exception, "Only one block found in block log" );
 
-   std::cout << "block.log and block.index contains block(s): [ 1 - " << end->block_num << " ]" << std::endl;
+   std::cout << "block.log and block.index contains block(s): [ 1 - " << end->block_num() << " ]" << std::endl;
 
    optional<chainbase::database> reversible_blocks;
    try {
@@ -121,41 +137,27 @@ void blocklog::read_log() {
       else
          *out << fc::json::to_pretty_string(v) << "\n";
 
-      if(0)
-      {
-         transaction_receipt trxrpt = next->transactions[0];
-         packed_transaction ptrx = trxrpt.trx.get<packed_transaction>();
-
-
-         *out <<"packed_transaction digest:" << "\n";
-         auto dg2 = trxrpt.digest();
-         *out << string( dg2 ) << "\n";
-
-
-
-         *out <<"packed_transaction:" << "\n";
-         bytes s = fc::raw::pack(ptrx);
-         *out << fc::to_hex(s.data(),s.size()) << "\n";
-
-         *out <<"transaction_receipt_header:" << "\n";
-         transaction_receipt_header h = trxrpt;
-
-         bytes s2 = fc::raw::pack(h);
-         *out << fc::to_hex(s2.data(),s2.size()) << "\n";
-
-         *out <<"packed_digest:" << "\n";
-         auto dg = ptrx.packed_digest();
-         *out << string( dg ) << "\n";
-      }
-
-      if(print_packed_header){
+      if( print_packed_header ){
          signed_block_header header = *next;
          bytes s = fc::raw::pack(header);
-         *out << fc::to_hex(s.data(),s.size()) << "\n";
+         print_hex( out, string("packed_header_") + std::to_string( header.block_num() ), s.data(), s.size());
+      }
+
+      if( print_packed_trx ){
+         for( auto const & trx : next->transactions ){
+            transaction_receipt_type tx;
+            tx.net_usage_words = trx.net_usage_words;
+            tx.cpu_usage_us = trx.cpu_usage_us;
+            tx.status = trx.status;
+            tx.trx = trx.trx.get<packed_transaction>();
+
+            bytes s = fc::raw::pack( tx );
+            print_hex( out, string("packed_trx_") + trx.trx.get<packed_transaction>().id().str(), s.data(), s.size());
+         }
       }
    };
 
-   if(pack_header_from == 0){
+   if( pack_headers_from == 0 ){
       bool contains_obj = false;
       while((block_num <= last_block) && (next = block_logger.read_block_by_num( block_num ))) {
          if (as_json_array && contains_obj)
@@ -164,7 +166,7 @@ void blocklog::read_log() {
          ++block_num;
          contains_obj = true;
       }
-      if (reversible_blocks) {
+      if ( reversible_blocks ) {
          const reversible_block_object* obj = nullptr;
          while( (block_num <= last_block) && (obj = reversible_blocks->find<reversible_block_object,by_num>(block_num)) ) {
             if (as_json_array && contains_obj)
@@ -176,14 +178,14 @@ void blocklog::read_log() {
          }
       }
    } else {
-      block_num = pack_header_from;
+      block_num = pack_headers_from;
       std::vector<signed_block_header> headers;
-      while((block_num <= pack_header_from + pack_header_interval) && (next = block_logger.read_block_by_num( block_num ))) {
-         headers.push_back(*next);
+      while(( block_num < pack_headers_from + pack_headers_interval ) && ( next = block_logger.read_block_by_num( block_num ))) {
+         headers.push_back( *next );
          ++block_num;
       }
-      bytes s = fc::raw::pack(headers);
-      *out << fc::to_hex(s.data(),s.size()) << "\n";
+      bytes s = fc::raw::pack( headers );
+      print_hex( out, string("packed_header") + std::to_string(pack_headers_from) + "-" + std::to_string( pack_headers_interval ), s.data(), s.size());
    }
 
    if (as_json_array)
@@ -207,15 +209,17 @@ void blocklog::set_program_options(options_description& cli)
           "Print out json blocks wrapped in json array (otherwise the output is free-standing json objects).")
          ("info,i", bpo::bool_switch(&info)->default_value(false),
           "Only print the first and last block number in forkdb of current chain.")
-         ("pack-header", bpo::bool_switch(&print_packed_header)->default_value(false),
+         ("print-packed-header", bpo::bool_switch(&print_packed_header)->default_value(false),
           "Print packed header.")
-         ("pack-header-from", bpo::value<uint32_t>(&pack_header_from)->default_value(0),
-          "Print packed headers.")
-         ("pack-header-interval", bpo::value<uint32_t>(&pack_header_interval)->default_value(10),
-          "Print packed headers.")
-         ("pack-header-times", bpo::value<uint32_t>(&pack_header_times)->default_value(1),
-          "Print packed headers.")
-         ("help", "Print this help message and exit.")
+         ("print-packed-trx", bpo::bool_switch(&print_packed_trx)->default_value(false),
+          "Print packed transaction.")
+         ("pack-headers-from", bpo::value<uint32_t>(&pack_headers_from)->default_value(0),
+          "Packed headers from.")
+         ("pack-headers-interval", bpo::value<uint32_t>(&pack_headers_interval)->default_value(10),
+          "Packed headers amount.")
+         ("pack-headers-times", bpo::value<uint32_t>(&pack_headers_times)->default_value(1),
+          "Print Packed headers times.")
+         ("help,h", "Print this help message and exit.")
          ;
 
 }
@@ -272,3 +276,34 @@ int main(int argc, char** argv)
 
    return 0;
 }
+
+
+
+
+//
+//if(0)
+//{
+//transaction_receipt trxrpt = next->transactions[0];
+//packed_transaction ptrx = trxrpt.trx.get<packed_transaction>();
+//
+//
+//*out <<"packed_transaction digest:" << "\n";
+//auto dg2 = trxrpt.digest();
+//*out << string( dg2 ) << "\n";
+//
+//
+//
+//*out <<"packed_transaction:" << "\n";
+//bytes s = fc::raw::pack(ptrx);
+//*out << fc::to_hex(s.data(),s.size()) << "\n";
+//
+//*out <<"transaction_receipt_header:" << "\n";
+//transaction_receipt_header h = trxrpt;
+//
+//bytes s2 = fc::raw::pack(h);
+//*out << fc::to_hex(s2.data(),s2.size()) << "\n";
+//
+//*out <<"packed_digest:" << "\n";
+//auto dg = ptrx.packed_digest();
+//*out << string( dg ) << "\n";
+//}
