@@ -45,13 +45,19 @@ struct blocklog {
    uint32_t                         pack_header_times;
 };
 
+
+struct transaction_receipt_type : public transaction_receipt_header {
+   packed_transaction trx;
+};
+
+
 void blocklog::read_log() {
    block_log block_logger(blocks_dir);
    const auto end = block_logger.read_head();
    EOS_ASSERT( end, block_log_exception, "No blocks found in block log" );
    EOS_ASSERT( end->block_num() > 1, block_log_exception, "Only one block found in block log" );
 
-   ilog( "existing block log contains block num 1 through block num ${n}", ("n",end->block_num()) );
+   std::cout << "block.log and block.index contains block(s): [ 1 - " << end->block_num << " ]" << std::endl;
 
    optional<chainbase::database> reversible_blocks;
    try {
@@ -61,7 +67,7 @@ void blocklog::read_log() {
       auto first = idx.lower_bound(end->block_num());
       auto last = idx.rbegin();
       if (first != idx.end() && last != idx.rend())
-         ilog( "existing reversible block num ${first} through block num ${last} ", ("first",first->get_block()->block_num())("last",last->get_block()->block_num()) );
+         std::cout << "existing reversible block num: [ " << first->get_block()->block_num() << " - " << last->get_block()->block_num() << " ]" << std::endl;
       else {
          elog( "no blocks available in reversible block database: only block_log blocks are available" );
          reversible_blocks.reset();
@@ -75,7 +81,6 @@ void blocklog::read_log() {
          throw;
       }
    }
-
    if(info) return;
 
    std::ofstream output_blocks;
@@ -143,10 +148,6 @@ void blocklog::read_log() {
          *out << string( dg ) << "\n";
       }
 
-
-
-
-
       if(print_packed_header){
          signed_block_header header = *next;
          bytes s = fc::raw::pack(header);
@@ -176,17 +177,13 @@ void blocklog::read_log() {
       }
    } else {
       block_num = pack_header_from;
-
       std::vector<signed_block_header> headers;
-
       while((block_num <= pack_header_from + pack_header_interval) && (next = block_logger.read_block_by_num( block_num ))) {
          headers.push_back(*next);
          ++block_num;
       }
-
       bytes s = fc::raw::pack(headers);
       *out << fc::to_hex(s.data(),s.size()) << "\n";
-
    }
 
    if (as_json_array)
@@ -196,19 +193,19 @@ void blocklog::read_log() {
 void blocklog::set_program_options(options_description& cli)
 {
    cli.add_options()
-         ("blocks-dir", bpo::value<bfs::path>()->default_value("blocks"),
+         ("blocks-dir,d", bpo::value<bfs::path>()->default_value("blocks"),
           "the location of the blocks directory (absolute path or relative to the current directory)")
          ("output-file,o", bpo::value<bfs::path>(),
           "the file to write the block log output to (absolute or relative path).  If not specified then output is to stdout.")
-         ("first", bpo::value<uint32_t>(&first_block)->default_value(1),
+         ("first,f", bpo::value<uint32_t>(&first_block)->default_value(1),
           "the first block number to log")
-         ("last", bpo::value<uint32_t>(&last_block)->default_value(std::numeric_limits<uint32_t>::max()),
+         ("last,l", bpo::value<uint32_t>(&last_block)->default_value(std::numeric_limits<uint32_t>::max()),
           "the last block number (inclusive) to log")
          ("no-pretty-print", bpo::bool_switch(&no_pretty_print)->default_value(false),
           "Do not pretty print the output.  Useful if piping to jq to improve performance.")
          ("as-json-array", bpo::bool_switch(&as_json_array)->default_value(false),
           "Print out json blocks wrapped in json array (otherwise the output is free-standing json objects).")
-         ("info", bpo::bool_switch(&info)->default_value(false),
+         ("info,i", bpo::bool_switch(&info)->default_value(false),
           "Only print the first and last block number in forkdb of current chain.")
          ("pack-header", bpo::bool_switch(&print_packed_header)->default_value(false),
           "Print packed header.")
