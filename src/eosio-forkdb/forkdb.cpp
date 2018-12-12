@@ -39,7 +39,25 @@ struct forkdb {
    bool                             no_pretty_print;
    bool                             as_json_array;
    bool                             info;
+   uint32_t                         pack_header_from;
+   uint32_t                         pack_header_interval;
 };
+
+template <typename T>
+void print_packed_data(std::ostream* out, const string& name, const T &v){
+   bytes s = fc::raw::pack(v);
+   *out << name << '=' << "'\"" << fc::to_hex(s.data(),s.size()) <<"\"'" << "\n";
+};
+
+void print_hex(std::ostream* out, const string& name, const char* str, const int size){
+   *out << name << '=' << "'\"" << fc::to_hex(str,size)  <<"\"'" << "\n";
+};
+
+template <typename T>
+void print_var(std::ostream* out, const string& name, const T &v){
+   *out << name << '=' << "'"<<  fc::json::to_string(v)  <<"'" << "\n";
+};
+
 
 void forkdb::read_log() {
    fork_database fork_db(blocks_dir);
@@ -75,6 +93,7 @@ void forkdb::read_log() {
    block_state_ptr next;
    fc::variant pretty_output;
    const fc::microseconds deadline = fc::seconds(10);
+
    auto print_block = [&](block_state_ptr& next) {
       abi_serializer::to_variant(*next,
                                  pretty_output,
@@ -92,14 +111,43 @@ void forkdb::read_log() {
          fc::json::to_stream(*out, v, fc::json::stringify_large_ints_and_doubles);
       else
          *out << fc::json::to_pretty_string(v) << "\n";
+
+      if(true){
+         auto n = *next;
+         print_packed_data( out, "header",n.header);
+         print_hex(out,"pending_schedule_hash",n.pending_schedule_hash.data(),n.pending_schedule_hash.data_size());
+         print_var(out,"pending_schedule",n.pending_schedule);
+         print_var(out,"active_schedule",n.active_schedule);
+         print_var(out,"blockroot_merkle",n.blockroot_merkle);
+         print_var(out,"confirm_count",n.confirm_count);
+
+         print_var(out,"sig_digest",n.sig_digest());
+
+         print_hex(out,"header_digest",n.header.digest().data(),n.header.digest().data_size());
+         print_var(out,"producer_signature",n.header.producer_signature);
+         print_packed_data( out, "packed producer_signature",n.header.producer_signature);
+      }
    };
-   bool contains_obj = false;
-   while((block_num <= last_block) && (next = fork_db.get_block_in_current_chain_by_num( block_num ))) {
-      if (as_json_array && contains_obj)
-         *out << ",";
-      print_block(next);
-      ++block_num;
-      contains_obj = true;
+
+
+   if( pack_header_from == 0 ){
+      bool contains_obj = false;
+      while((block_num <= last_block) && (next = fork_db.get_block_in_current_chain_by_num( block_num ))) {
+         if (as_json_array && contains_obj)
+            *out << ",";
+         print_block(next);
+         ++block_num;
+         contains_obj = true;
+      }
+   } else {
+      block_num = pack_header_from;
+      std::vector<signed_block_header> headers;
+      while((block_num <= pack_header_from + pack_header_interval) && (next = fork_db.get_block_in_current_chain_by_num(  block_num ))) {
+         headers.push_back(next->header);
+         ++block_num;
+      }
+      bytes s = fc::raw::pack(headers);
+      print_hex(out,"packed_headers", s.data(), s.size());
    }
 
    if (as_json_array)
@@ -123,6 +171,10 @@ void forkdb::set_program_options(options_description& cli)
           "Print out json blocks wrapped in json array (otherwise the output is free-standing json objects).")
          ("info,i", bpo::bool_switch(&info)->default_value(false),
           "Only print the first and last block number in forkdb of current chain.")
+         ("pack-header-from", bpo::value<uint32_t>(&pack_header_from)->default_value(0),
+          "Print packed headers.")
+         ("pack-header-interval", bpo::value<uint32_t>(&pack_header_interval)->default_value(10),
+          "Print packed headers.")
          ("help,h", "Print this help message and exit.")
          ;
 
