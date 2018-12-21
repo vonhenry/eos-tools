@@ -34,4 +34,4 @@ list(APPEND LIBRARIES
         )
 
 add_subdirectory(src)
-#add_subdirectory(cpptest)
+add_subdirectory(cpptest)
