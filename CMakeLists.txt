@@ -33,5 +33,5 @@ list(APPEND LIBRARIES
         fc gmp ssl crypto secp256k1 softfloat builtins Platform
         )
 
-add_subdirectory(src)
+#add_subdirectory(src)
 add_subdirectory(cpptest)
